@@ -12,7 +12,6 @@
 #include <list>
 #include <set>
 #include <tuple>
-#include "../../include/coroutine_tasks.hpp"
 #include "../libuv/include/uv.h"
 
 namespace native

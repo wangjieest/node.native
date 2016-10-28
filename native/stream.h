@@ -45,7 +45,7 @@ namespace native
 
                 return uv_read_start(get<uv_stream_t>(),
                     [](uv_handle_t*, size_t suggested_size, uv_buf_t*uvbuf){
-                        uvbuf->len = std::max(suggested_size, max_alloc_size);
+                        uvbuf->len = (std::max)(suggested_size, max_alloc_size);
                         uvbuf->base = new char[uvbuf->len];
                     },
                     [](uv_stream_t* s, ssize_t nread, const uv_buf_t* uvbuf){
@@ -80,7 +80,7 @@ namespace native
 
 			error write(const std::string& buf, std::function<void(error)>&& callback)
             {
-                uv_buf_t uvbuf = { buf.length(), const_cast<char*>(buf.c_str()) };
+                uv_buf_t uvbuf = { static_cast<uint32_t>(buf.length()), const_cast<char*>(buf.c_str()) };
                 callbacks::store(get()->data, native::internal::uv_cid_write, std::move(callback));
                 return uv_write(new uv_write_t, get<uv_stream_t>(), &uvbuf, 1, [](uv_write_t* req, int status) {
                     callbacks::invoke<decltype(callback)>(req->handle->data, native::internal::uv_cid_write, status);
@@ -90,7 +90,7 @@ namespace native
 
 			error write(const std::vector<char>& buf, std::function<void(error)>&& callback)
             {
-                uv_buf_t uvbuf = { buf.size(), const_cast<char*>(&buf[0]) };
+                uv_buf_t uvbuf = { static_cast<uint32_t>(buf.size()), const_cast<char*>(&buf[0]) };
                 callbacks::store(get()->data, native::internal::uv_cid_write, std::move(callback));
                 return uv_write(new uv_write_t, get<uv_stream_t>(), &uvbuf, 1, [](uv_write_t* req, int status) {
                     callbacks::invoke<decltype(callback)>(req->handle->data, native::internal::uv_cid_write, status);
