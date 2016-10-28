@@ -42,55 +42,69 @@ namespace native
                 return nullptr;
             }
 
-            bool nodelay(bool enable) { return uv_tcp_nodelay(get<uv_tcp_t>(), enable?1:0) == 0; }
-            bool keepalive(bool enable, unsigned int delay) { return uv_tcp_keepalive(get<uv_tcp_t>(), enable?1:0, delay) == 0; }
-            bool simultanious_accepts(bool enable) { return uv_tcp_simultaneous_accepts(get<uv_tcp_t>(), enable?1:0) == 0; }
+			error nodelay(bool enable) { return uv_tcp_nodelay(get<uv_tcp_t>(), enable?1:0); }
+			error keepalive(bool enable, unsigned int delay) { return uv_tcp_keepalive(get<uv_tcp_t>(), enable?1:0, delay); }
+			error simultanious_accepts(bool enable) { return uv_tcp_simultaneous_accepts(get<uv_tcp_t>(), enable?1:0); }
 
-            bool bind(const std::string& ip, int port) { return uv_tcp_bind(get<uv_tcp_t>(), uv_ip4_addr(ip.c_str(), port)) == 0; }
-            bool bind6(const std::string& ip, int port) { return uv_tcp_bind6(get<uv_tcp_t>(), uv_ip6_addr(ip.c_str(), port)) == 0; }
-
-            bool connect(const std::string& ip, int port, std::function<void(error)> callback)
-            {
-                callbacks::store(get()->data, native::internal::uv_cid_connect, callback);
-                return uv_tcp_connect(new uv_connect_t, get<uv_tcp_t>(), to_ip4_addr(ip, port), [](uv_connect_t* req, int status) {
-                    callbacks::invoke<decltype(callback)>(req->handle->data, native::internal::uv_cid_connect, status?uv_last_error(req->handle->loop):error());
-                    delete req;
-                }) == 0;
+			error bind(const std::string& ip, int port) {
+                sockaddr_in sock; 
+                return uv_ip4_addr(ip.c_str(), port, &sock) 
+                    || uv_tcp_bind(get<uv_tcp_t>(), (sockaddr*)&sock, 0); 
+            }
+			error bind6(const std::string& ip, int port) {
+                sockaddr_in6 sock; 
+                return uv_ip6_addr(ip.c_str(), port, &sock) 
+                    || uv_tcp_bind(get<uv_tcp_t>(), (sockaddr*)&sock, UV_TCP_IPV6ONLY); 
             }
 
-            bool connect6(const std::string& ip, int port, std::function<void(error)> callback)
+			error connect(const std::string& ip, int port, std::function<void(error)>&& callback)
             {
-                callbacks::store(get()->data, native::internal::uv_cid_connect6, callback);
-                return uv_tcp_connect6(new uv_connect_t, get<uv_tcp_t>(), to_ip6_addr(ip, port), [](uv_connect_t* req, int status) {
-                    callbacks::invoke<decltype(callback)>(req->handle->data, native::internal::uv_cid_connect6, status?uv_last_error(req->handle->loop):error());
+                sockaddr_in sock;
+                callbacks::store(get()->data, native::internal::uv_cid_connect, std::move(callback));
+                return uv_ip4_addr(ip.c_str(), port, &sock)
+                    || uv_tcp_connect(new uv_connect_t, get<uv_tcp_t>(), (sockaddr*)&sock, [](uv_connect_t* req, int status) {
+                    callbacks::invoke<decltype(callback)>(req->handle->data, native::internal::uv_cid_connect, status);
                     delete req;
-                }) == 0;
+                });
             }
 
-            bool getsockname(bool& ip4, std::string& ip, int& port)
+			error connect6(const std::string& ip, int port, std::function<void(error)>&& callback)
+            {
+                sockaddr_in6 sock;
+                callbacks::store(get()->data, native::internal::uv_cid_connect6, std::move(callback));
+                return uv_ip6_addr(ip.c_str(), port, &sock)
+                    || uv_tcp_connect(new uv_connect_t, get<uv_tcp_t>(), (sockaddr*)&sock, [](uv_connect_t* req, int status) {
+                    callbacks::invoke<decltype(callback)>(req->handle->data, native::internal::uv_cid_connect6, status);
+                    delete req;
+                });
+            }
+
+			error getsockname(bool& ip4, std::string& ip, int& port)
             {
                 struct sockaddr_storage addr;
                 int len = sizeof(addr);
-                if(uv_tcp_getsockname(get<uv_tcp_t>(), reinterpret_cast<struct sockaddr*>(&addr), &len) == 0)
+				error err = uv_tcp_getsockname(get<uv_tcp_t>(), reinterpret_cast<struct sockaddr*>(&addr), &len);
+				if(!err)
                 {
                     ip4 = (addr.ss_family == AF_INET);
                     if(ip4) return from_ip4_addr(reinterpret_cast<ip4_addr*>(&addr), ip, port);
                     else return from_ip6_addr(reinterpret_cast<ip6_addr*>(&addr), ip, port);
                 }
-                return false;
+                return err;
             }
 
-            bool getpeername(bool& ip4, std::string& ip, int& port)
+			error getpeername(bool& ip4, std::string& ip, int& port)
             {
                 struct sockaddr_storage addr;
                 int len = sizeof(addr);
-                if(uv_tcp_getpeername(get<uv_tcp_t>(), reinterpret_cast<struct sockaddr*>(&addr), &len) == 0)
+				error err = uv_tcp_getpeername(get<uv_tcp_t>(), reinterpret_cast<struct sockaddr*>(&addr), &len);
+				if(!err)
                 {
                     ip4 = (addr.ss_family == AF_INET);
                     if(ip4) return from_ip4_addr(reinterpret_cast<ip4_addr*>(&addr), ip, port);
                     else return from_ip6_addr(reinterpret_cast<ip6_addr*>(&addr), ip, port);
                 }
-                return false;
+                return err;
             }
         };
     }

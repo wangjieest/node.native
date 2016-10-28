@@ -2,7 +2,7 @@
 #define __HTTP_H__
 
 #include <sstream>
-#include <http_parser.h>
+#include "../http-parser/http_parser.h"
 #include "base.h"
 #include "handle.h"
 #include "net.h"
@@ -111,12 +111,12 @@ namespace native
                 }
             }
 
-            bool has_schema() const { return handle_.field_set & (1<<UF_SCHEMA); }
-            bool has_host() const { return handle_.field_set & (1<<UF_HOST); }
-            bool has_port() const { return handle_.field_set & (1<<UF_PORT); }
-            bool has_path() const { return handle_.field_set & (1<<UF_PATH); }
-            bool has_query() const { return handle_.field_set & (1<<UF_QUERY); }
-            bool has_fragment() const { return handle_.field_set & (1<<UF_FRAGMENT); }
+            bool has_schema() const { return !!(handle_.field_set & (1<<UF_SCHEMA)); }
+            bool has_host() const { return !!(handle_.field_set & (1<<UF_HOST)); }
+            bool has_port() const { return !!(handle_.field_set & (1<<UF_PORT)); }
+            bool has_path() const { return !!(handle_.field_set & (1<<UF_PATH)); }
+            bool has_query() const { return !!(handle_.field_set & (1<<UF_QUERY)); }
+            bool has_fragment() const { return !!(handle_.field_set & (1<<UF_FRAGMENT)); }
 
         private:
             http_parser_url handle_;
@@ -144,7 +144,7 @@ namespace native
             {}
 
         public:
-            bool end(const std::string& body)
+            error end(const std::string& body)
             {
                 // Content-Length
                 if(headers_.find("Content-Length") == headers_.end())
@@ -343,7 +343,7 @@ namespace native
             }
 
         private:
-            bool parse(std::function<void(request&, response&)> callback)
+            bool parse(std::function<void(request&, response&)>&& callback)
             {
                 request_ = new request;
                 response_ = new response(this, socket_.get());
@@ -352,7 +352,7 @@ namespace native
                 parser_.data = this;
 
                 // store callback object
-                callbacks::store(callback_lut_, 0, callback);
+                callbacks::store(callback_lut_, 0, std::move(callback));
 
                 parser_settings_.on_url = [](http_parser* parser, const char *at, size_t len) {
                     auto client = reinterpret_cast<client_context*>(parser->data);
@@ -467,18 +467,19 @@ namespace native
             }
 
         public:
-            static std::shared_ptr<http> create_server(const std::string& ip, int port, std::function<void(request&, response&)> callback)
+            static std::shared_ptr<http> create_server(const std::string& ip, int port, std::function<void(request&, response&)>&& callback)
             {
                 auto server = std::shared_ptr<http>(new http);
-                if(server->listen(ip, port, callback)) return server;
+                if(server->listen(ip, port, std::move(callback))) return server;
                 return nullptr;
             }
 
-            bool listen(const std::string& ip, int port, std::function<void(request&, response&)> callback)
+			error listen(const std::string& ip, int port, std::function<void(request&, response&)>&& callback)
             {
-                if(!socket_->bind(ip, port)) return false;
+				error err = socket_->bind(ip, port);
+				if(err) return err;
 
-                if(!socket_->listen([=](error e) {
+                return socket_->listen([=,cb=std::move(callback)](error e) mutable {
                     if(e)
                     {
                         // TODO: handle client connection error
@@ -486,11 +487,9 @@ namespace native
                     else
                     {
                         auto client = new client_context(socket_.get());
-                        client->parse(callback);
+                        client->parse(std::move(cb));
                     }
-                })) return false;
-
-                return true;
+				});
             }
 
         private:
@@ -499,14 +498,13 @@ namespace native
 
         typedef http_method method;
         typedef http_parser_url_fields url_fields;
-        typedef http_errno error;
 
-        inline const char* get_error_name(error err)
+        inline const char* get_error_name(http_errno err)
         {
             return http_errno_name(err);
         }
 
-        inline const char* get_error_description(error err)
+        inline const char* get_error_description(http_errno err)
         {
             return http_errno_description(err);
         }

@@ -1,7 +1,15 @@
+#include "stdafx.h"
 #include <iostream>
 #include <memory>
 #include <string>
 #include <native/native.h>
+#pragma comment(lib,"advapi32.lib")
+#pragma comment(lib,"iphlpapi.lib")
+#pragma comment(lib,"psapi.lib")
+#pragma comment(lib,"shell32.lib")
+#pragma comment(lib,"ws2_32.lib")
+#pragma comment(lib,"Userenv.lib")
+
 using namespace native;
 
 #include <fcntl.h>

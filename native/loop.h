@@ -16,7 +16,7 @@ namespace native
          *  Default constructor
          *  @param use_default indicates whether to use default loop or create a new loop.
          */
-        loop(bool use_default=false)
+        loop(bool use_default=true)
             : uv_loop_(use_default ? uv_default_loop() : uv_loop_new())
         { }
 
@@ -41,21 +41,21 @@ namespace native
          *  Starts the loop.
          *  Internally, this function just calls uv_run() function.
          */
-        bool run() { 
+        error run() { 
 
             /* new libuv stuff */
-            return uv_run(uv_loop_, UV_RUN_DEFAULT)==0; 
+            return uv_run(uv_loop_, UV_RUN_DEFAULT); 
         }
 
         /*!
          *  Polls for new events without blocking.
          *  Internally, this function just calls uv_run_once() function.
          */
-        bool run_once() { 
+		error run_once() {
 
             //return uv_run_once(uv_loop_)==0; 
      
-            return uv_run(uv_loop_, UV_RUN_ONCE)==0; 
+            return uv_run(uv_loop_, UV_RUN_ONCE); 
         }
 
         /*!
@@ -73,11 +73,9 @@ namespace native
         /*!
          *  Returns the last error occured in the loop.
          */
-        error last_error() { return uv_last_error(uv_loop_); }
-
     private:
-        loop(const loop&);
-        void operator =(const loop&);
+        loop(const loop&) = delete;
+        void operator =(const loop&) =delete;
 
     private:
         uv_loop_t* uv_loop_;
@@ -86,7 +84,7 @@ namespace native
     /*!
      *  Starts the default loop.
      */
-    inline int run()
+    inline error run()
     {
         /*New libuv requires a runmode enum argument*/
         return uv_run(uv_default_loop(),UV_RUN_DEFAULT);
@@ -95,7 +93,7 @@ namespace native
     /*!
      *  Polls for new events without blocking for the default loop.
      */
-    inline int run_once()
+    inline error run_once()
     {
         /*New libuv requires a runmode argument*/
         return uv_run(uv_default_loop(),UV_RUN_ONCE);

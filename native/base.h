@@ -12,8 +12,8 @@
 #include <list>
 #include <set>
 #include <tuple>
-
-#include <uv.h>
+#include "../../include/coroutine_tasks.hpp"
+#include "../libuv/include/uv.h"
 
 namespace native
 {
@@ -28,6 +28,7 @@ namespace native
             uv_cid_shutdown,
             uv_cid_connect,
             uv_cid_connect6,
+			uv_cid_function,
             uv_cid_max
         };
     }
