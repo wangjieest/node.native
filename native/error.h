@@ -26,7 +26,8 @@ namespace native
         error() : uv_err_() {}
         error(int e) : uv_err_(e) {}
         ~error() = default;
-
+		error(const error&) = default;
+		error& operator=(const error&) = default;
     public:
         operator bool() { return uv_err_ != 0; }
 
@@ -34,7 +35,6 @@ namespace native
         const char* name() const { return uv_err_name(uv_err_); }
         const char* str() const { return uv_strerror(uv_err_); }
 
-    private:
         int uv_err_;
     };
 }

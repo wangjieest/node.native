@@ -18,7 +18,9 @@ namespace native
          */
         loop(bool use_default=true)
             : uv_loop_(use_default ? uv_default_loop() : uv_loop_new())
-        { }
+        {
+
+		}
 
         /*!
          *  Destructor
@@ -70,10 +72,11 @@ namespace native
          */
         int64_t now() { return uv_now(uv_loop_); }
 
-        /*!
-         *  Returns the last error occured in the loop.
-         */
+		// added async function support
+
     private:
+
+
         loop(const loop&) = delete;
         void operator =(const loop&) =delete;
 
@@ -81,6 +84,33 @@ namespace native
         uv_loop_t* uv_loop_;
     };
 
+
+
+	uv_async_t* uv_loop_post(uv_loop_t*uv_loop, std::function<void(void)>&&callback)
+	{
+		struct uv_async_function_t : public uv_async_t
+		{
+			std::function<void(void)> func_;
+		};
+		uv_async_function_t* async = new uv_async_function_t;
+		
+		error err = uv_async_init(uv_loop, async, [](uv_async_t* handle) {
+			auto async = static_cast<uv_async_function_t*>(handle);
+			if (async->func_)
+				async->func_();
+			uv_close((uv_handle_t*)handle, nullptr);
+			delete async;
+		});
+		if (err)
+		{
+			delete async;
+			return nullptr;
+		}
+		async->func_ = std::move(callback);
+		uv_async_send(async);
+		return async;
+	}
+	
     /*!
      *  Starts the default loop.
      */

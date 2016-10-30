@@ -34,385 +34,288 @@ namespace native
         static const int large_large = O_LARGEFILE;
 #endif
 
-        namespace internal
+		template<typename T>
+		struct us_fs_task_t : public uv_fs_t, public promise_data_base_t<T>
+		{
+			using type = T;
+		};
+
+
+        task<std::tuple<native::fs::file_handle, error>> open(const std::string& path, int flags, int mode)
         {
-            template<typename callback_t>
-            uv_fs_t* create_req(callback_t&& callback, void* data=nullptr)
-            {
-                auto req = new uv_fs_t;
-                req->data = new callbacks(1);
-                assert(req->data);
-                callbacks::store(req->data, 0, std::forward<callback_t>(callback), data);
+			PROMISE_REQ_HEAD(us_fs_task_t, std::tuple<native::fs::file_handle, error>);
 
-                return req;
-            }
-
-            template<typename callback_t, typename ...A>
-            typename std::result_of<callback_t(A...)>::type invoke_from_req(uv_fs_t* req, A&& ... args)
-            {
-                return callbacks::invoke<callback_t>(req->data, 0, std::forward<A>(args)...);
-            }
-
-            template<typename callback_t, typename data_t>
-            data_t* get_data_from_req(uv_fs_t* req)
-            {
-                return reinterpret_cast<data_t*>(callbacks::get_data<callback_t>(req->data, 0));
-            }
-
-            template<typename callback_t, typename data_t>
-            void delete_req(uv_fs_t* req)
-            {
-                delete reinterpret_cast<data_t*>(callbacks::get_data<callback_t>(req->data, 0));
-                delete reinterpret_cast<callbacks*>(req->data);
-                uv_fs_req_cleanup(req);
-                delete req;
-            }
-
-            template<typename callback_t, typename data_t>
-            void delete_req_arr_data(uv_fs_t* req)
-            {
-                delete[] reinterpret_cast<data_t*>(callbacks::get_data<callback_t>(req->data, 0));
-                delete reinterpret_cast<callbacks*>(req->data);
-                uv_fs_req_cleanup(req);
-                delete req;
-            }
-
-            inline void delete_req(uv_fs_t* req)
-            {
-                delete reinterpret_cast<callbacks*>(req->data);
-                uv_fs_req_cleanup(req);
-                delete req;
-            }
-
-            struct rte_context
-            {
-                fs::file_handle file;
-                const static int buflen = 32;
-                char buf[buflen];
-                std::string result;
-            };
-
-            template<typename callback_t>
-            void rte_cb(uv_fs_t* req)
-            {
-                assert(req->fs_type == UV_FS_READ);
-
-                auto ctx = reinterpret_cast<rte_context*>(callbacks::get_data<callback_t>(req->data, 0));
-                if(req->result < 0)
-                {
-                    // system error
-                    invoke_from_req<callback_t>(req, std::string(), error(req->result));
-                    delete_req<callback_t, rte_context>(req);
-                }
-                else if(req->result == 0)
-                {
-                    // EOF
-                    invoke_from_req<callback_t>(req, ctx->result, error());
-                    delete_req<callback_t, rte_context>(req);
-                }
-                else
-                {
-                    ctx->result.append(std::string(ctx->buf, req->result));
-
-                    uv_fs_req_cleanup(req);
-                    uv_buf_t uvbuf = { rte_context::buflen, ctx->buf };
-					error err = uv_fs_read(uv_default_loop(), req, ctx->file, &uvbuf, 1, ctx->result.length(), rte_cb<callback_t>);
-                    if (err)
-                    {
-                        // failed to initiate uv_fs_read():
-                        invoke_from_req<callback_t>(req, std::string(), error(err));
-                        delete_req<callback_t, rte_context>(req);
-                    }
-                }
-            }
-        }
-
-        inline int open(const std::string& path, int flags, int mode, std::function<void(native::fs::file_handle fd, error e)>&& callback)
-        {
-            auto req = internal::create_req(std::move(callback));
-			error err = uv_fs_open(uv_default_loop(), req, path.c_str(), flags, mode, [](uv_fs_t* req) {
+			error err = uv_fs_open(uv_default_loop(), &uv_req, path.c_str(), flags, mode, [](uv_fs_t* req) {
                 assert(req->fs_type == UV_FS_OPEN);
-
-                if(req->result < 0) internal::invoke_from_req<decltype(callback)>(req, file_handle(-1), error(req->result));
-                else internal::invoke_from_req<decltype(callback)>(req, req->result, error(req->result));
-
-                internal::delete_req(req);
+				auto val = static_cast<promise_cur_data_t*>(req);
+				val->set_value(data_type(req->result<0 ? file_handle(-1) : req->result,req->result));
+				val->resume();
             });
-            if (err)
-            {
-                // failed to initiate uv_fs_open()
-                internal::delete_req(req);
-            }
-            return err;
-        }
 
-        inline int read(file_handle fd, size_t len, off_t offset, std::function<void(const std::string& str, error e)>&& callback)
+			co_await ret;
+			return std::move(ret_value);
+		}
+
+		task<std::tuple<std::string, error>> read(file_handle fd, size_t len, off_t offset)
         {
-            uv_buf_t uvbuf = { static_cast<size_t>(len), new char[len] };
-            auto req = internal::create_req(std::move(callback), uvbuf.base);
-			error err = uv_fs_read(uv_default_loop(), req, fd, &uvbuf, 1, offset, [](uv_fs_t* req) {
+			PROMISE_REQ_HEAD(us_fs_task_t, std::tuple<std::string, error>);
+			 
+			std::get<0>(ret_value).resize(len);
+			uv_buf_t uvbuf = {len, const_cast<char*>(std::get<0>(ret_value).c_str()) };
+
+			error err = uv_fs_read(uv_default_loop(), &uv_req, fd, &uvbuf, 1, offset, [](uv_fs_t* req) {
                 assert(req->fs_type == UV_FS_READ);
-                if(req->result < 0)
+				auto val = static_cast<promise_cur_data_t*>(req);
+				if (req->result < 0)
                 {
                     // system error
-                    internal::invoke_from_req<decltype(callback)>(req, std::string(), error(req->result));
+					val->set_value(data_type(std::string() , req->result));
                 }
                 else if(req->result == 0)
                 {
                     // EOF
-                    internal::invoke_from_req<decltype(callback)>(req, std::string(), error(UV_EOF));
+					val->set_value(data_type(std::string(), UV_EOF));
                 }
                 else
                 {
-                    auto buf = internal::get_data_from_req<decltype(callback), char>(req);
-                    internal::invoke_from_req<decltype(callback)>(req, std::string(buf, req->result), error());
+					std::get<0>(val->value_).resize(req->result);
                 }
-
-                internal::delete_req_arr_data<decltype(callback), char>(req);
+				val->resume();
             });
-            if (err)
-            {
-                // failed to initiate uv_fs_read()
-                internal::delete_req_arr_data<decltype(callback), char>(req);
-            }
-            return err;
-        }
 
-        inline int write(file_handle fd, const char* buf, size_t len, off_t offset, std::function<void(int nwritten, error e)>&& callback)
+			co_await ret;
+			return ret_value;
+		}
+
+		task<std::tuple<std::string, error>> read_to_end(file_handle fd)
         {
-            uv_buf_t uvbuf = { len, const_cast<char*>(buf) };
-            auto req = internal::create_req(std::move(callback));
-            // TODO: const_cast<> !!
-			error err = uv_fs_write(uv_default_loop(), req, fd, &uvbuf,  1, offset, [](uv_fs_t* req){
-                assert(req->fs_type == UV_FS_WRITE);
+			PROMISE_REQ_HEAD(us_fs_task_t, std::tuple<std::string, error>);
+			
+			auto &val = std::get<0>(ret_value);
+			const size_t block_size = 4096;
+			long offset = 0;
+			std::vector<std::string> collection;
+			do
+			{
+				std::tuple<std::string, error> block = co_await read(fd, block_size, 0);
+				error err = std::get<1>(block);
+				if (err.code() > 0) //more to read
+				{
+					collection.emplace_back(std::move(std::get<0>(block)));
+				}
+				else if(err.code() == 0) //no more data
+				{
+					collection.emplace_back(std::move(std::get<0>(block)));
+					size_t total = 0;
+					for (auto&a : collection)
+						total += a.size();
+					val.resize(total);
+					for (auto&a : collection)
+						val.append(a);
+					break;
+				}
+				else //error
+				{
+					std::get<1>(ret_value) = std::get<1>(block);
+					break;
+				}
+				offset += block_size;
+			} while (1);
+			
+			return ret_value;
+		}
 
-                if(req->result < 0)
-                {
-                    internal::invoke_from_req<decltype(callback)>(req, 0, error(req->result));
-                }
-                else
-                {
-                    internal::invoke_from_req<decltype(callback)>(req, req->result, error());
-                }
+		task<std::tuple<int, error>> write(file_handle fd, const char* buf, size_t len, off_t offset)
+		{
+			PROMISE_REQ_HEAD(us_fs_task_t, std::tuple<int, error>);
 
-                internal::delete_req(req);
-            });
-            if (err)
-            {
-                // failed to initiate uv_fs_write()
-                internal::delete_req(req);
-            }
-            return err;
-        }
+			uv_buf_t uvbuf = { len, const_cast<char*>(buf) };
+			// TODO: const_cast<> !!
+			error err = uv_fs_write(uv_default_loop(), &uv_req, fd, &uvbuf, 1, offset, [](uv_fs_t* req) {
+				assert(req->fs_type == UV_FS_WRITE);
+				auto val = static_cast<promise_cur_data_t*>(req);
+				if (req->result < 0)
+				{
+					val->set_value(data_type(0, req->result));
+				}
+				else
+				{
+					val->set_value(data_type(req->result, 0));
+				}
+				val->resume();
+			});
+			co_await ret;
+			return ret_value;
+		}
 
-        inline error read_to_end(file_handle fd, std::function<void(const std::string& str, error e)>&& callback)
+        task<error> close(file_handle fd)
         {
-            auto ctx = new internal::rte_context;
-            ctx->file = fd;
-            auto req = internal::create_req(std::move(callback), ctx);
-
-            uv_buf_t uvbuf = { internal::rte_context::buflen ,ctx->buf };
-			error err = uv_fs_read(uv_default_loop(), req, fd, &uvbuf, 1, 0, internal::rte_cb<decltype(callback)>);
-            if(err) 
-            {
-                // failed to initiate uv_fs_read()
-                internal::delete_req<decltype(callback), internal::rte_context>(req);
-            }
-            return err;
-        }
-
-        inline error close(file_handle fd, std::function<void(error e)>&& callback)
-        {
-            auto req = internal::create_req(std::move(callback));
-			error err = uv_fs_close(uv_default_loop(), req, fd, [](uv_fs_t* req){
+			PROMISE_REQ_HEAD(us_fs_task_t, error);
+			error err = uv_fs_close(uv_default_loop(), &uv_req, fd, [](uv_fs_t* req){
                 assert(req->fs_type == UV_FS_CLOSE);
-                internal::invoke_from_req<decltype(callback)>(req, req->result);
-                internal::delete_req(req);
+				auto val = static_cast<promise_cur_data_t*>(req);
+				val->set_value(req->result);
+				val->resume();
             });
-            if (err)
-            {
-                internal::delete_req(req);
-            }
-            return err;
+
+			co_await ret;
+			return ret_value;
         }
 
-        inline error unlink(const std::string& path, std::function<void(error e)>&& callback)
+		task<error> unlink(const std::string& path)
         {
-            auto req = internal::create_req(std::move(callback));
-			error err = uv_fs_unlink(uv_default_loop(), req, path.c_str(), [](uv_fs_t* req){
+			PROMISE_REQ_HEAD(us_fs_task_t, error);
+
+			error err = uv_fs_unlink(uv_default_loop(), &uv_req, path.c_str(), [](uv_fs_t* req){
                 assert(req->fs_type == UV_FS_UNLINK);
-                internal::invoke_from_req<decltype(callback)>(req, req->result);
-                internal::delete_req(req);
-            });
-            if (err) 
-            {
-                internal::delete_req(req);
-            }
-            return err;
-        }
+				auto val = static_cast<promise_cur_data_t*>(req);
+				val->set_value(req->result);
+				val->resume();
+			});
+			co_await ret;
+			return ret_value;
+		}
 
-        inline error mkdir(const std::string& path, int mode, std::function<void(error e)>&& callback)
+		task<error> mkdir(const std::string& path, int mode)
         {
-            auto req = internal::create_req(std::move(callback));
-			error err = uv_fs_mkdir(uv_default_loop(), req, path.c_str(), mode, [](uv_fs_t* req){
+			PROMISE_REQ_HEAD(us_fs_task_t, error);
+
+			error err = uv_fs_mkdir(uv_default_loop(), &uv_req, path.c_str(), mode, [](uv_fs_t* req){
                 assert(req->fs_type == UV_FS_MKDIR);
-                internal::invoke_from_req<decltype(callback)>(req, req->result);
-                internal::delete_req(req);
-            }); 
-            if (err) 
-            {
-                internal::delete_req(req);
-            }
-            return err;
-        }
+				auto val = static_cast<promise_cur_data_t*>(req);
+				val->set_value(req->result);
+				val->resume();
+			});
+			co_await ret;
+			return ret_value;
+		}
 
-        inline error rmdir(const std::string& path, std::function<void(error e)>&& callback)
+		task<error> rmdir(const std::string& path)
         {
-            auto req = internal::create_req(std::move(callback));
-			error err = uv_fs_rmdir(uv_default_loop(), req, path.c_str(), [](uv_fs_t* req){
+			PROMISE_REQ_HEAD(us_fs_task_t, error);
+			error err = uv_fs_rmdir(uv_default_loop(), &uv_req, path.c_str(), [](uv_fs_t* req){
                 assert(req->fs_type == UV_FS_RMDIR);
-                internal::invoke_from_req<decltype(callback)>(req, req->result);
-                internal::delete_req(req);
-            });
-            if (err)
-            {
-                internal::delete_req(req);
-            }
-            return err;
-        }
+				auto val = static_cast<promise_cur_data_t*>(req);
+				val->set_value(req->result);
+				val->resume();
+			});
+			co_await ret;
+			return ret_value;
+		}
 
-        inline error rename(const std::string& path, const std::string& new_path, std::function<void(error e)>&& callback)
+		task<error> rename(const std::string& path, const std::string& new_path)
         {
-            auto req = internal::create_req(std::move(callback));
-			error err = uv_fs_rename(uv_default_loop(), req, path.c_str(), new_path.c_str(), [](uv_fs_t* req){
+			PROMISE_REQ_HEAD(us_fs_task_t, error);
+			error err = uv_fs_rename(uv_default_loop(), &uv_req, path.c_str(), new_path.c_str(), [](uv_fs_t* req){
                 assert(req->fs_type == UV_FS_RENAME);
-                internal::invoke_from_req<decltype(callback)>(req, req->result);
-                internal::delete_req(req);
-            });
-            if (err)
-            {
-                internal::delete_req(req);
-            }
-            return err;
-        }
+				auto val = static_cast<promise_cur_data_t*>(req);
+				val->set_value(req->result);
+				val->resume();
+			});
+			co_await ret;
+			return ret_value;
+		}
 
-        inline error chmod(const std::string& path, int mode, std::function<void(error e)>&& callback)
+		task<error> chmod(const std::string& path, int mode)
         {
-            auto req = internal::create_req(std::move(callback));
-			error err = uv_fs_chmod(uv_default_loop(), req, path.c_str(), mode, [](uv_fs_t* req){
+			PROMISE_REQ_HEAD(us_fs_task_t, error);
+			error err = uv_fs_chmod(uv_default_loop(), &uv_req, path.c_str(), mode, [](uv_fs_t* req){
                 assert(req->fs_type == UV_FS_CHMOD);
-                internal::invoke_from_req<decltype(callback)>(req, req->result);
-                internal::delete_req(req);
-            });
-            if (err)
-            {
-                internal::delete_req(req);
-            }
-            return err;
-        }
+				auto val = static_cast<promise_cur_data_t*>(req);
+				val->set_value(req->result);
+				val->resume();
+			});
+			co_await ret;
+			return ret_value;
+		}
 
-        inline error chown(const std::string& path, int uid, int gid, std::function<void(error e)>&& callback)
+        task<error> chown(const std::string& path, int uid, int gid)
         {
-            auto req = internal::create_req(std::move(callback));
-            error err = uv_fs_chown(uv_default_loop(), req, path.c_str(), uid, gid, [](uv_fs_t* req){
+			PROMISE_REQ_HEAD(us_fs_task_t, error);
+			error err = uv_fs_chown(uv_default_loop(), &uv_req, path.c_str(), uid, gid, [](uv_fs_t* req) {
                 assert(req->fs_type == UV_FS_CHOWN);
-                internal::invoke_from_req<decltype(callback)>(req, req->result);
-                internal::delete_req(req);
-            });
-            if (err)
-            {
-                internal::delete_req(req);
-            }
-            return err;
-        }
+				auto val = static_cast<promise_cur_data_t*>(req);
+				val->set_value(req->result);
+				val->resume();
+			});
+
+			co_await ret;
+			return ret_value;
+		}
 
 #if 0
 		error readdir(const std::string& path, int flags, std::function<void(error e)>&& callback)
         {
-            auto req = internal::create_req(std::move(callback));
-			error err = uv_fs_readdir(uv_default_loop(), req, path.c_str(), flags, [](uv_fs_t* req){
+			PROMISE_REQ_HEAD(us_fs_task_t, error);
+			error err = uv_fs_readdir(uv_default_loop(), &uv_req, path.c_str(), flags, [](uv_fs_t* req){
                 assert(req->fs_type == UV_FS_READDIR);
-                internal::invoke_from_req<decltype(callback)>(req, req->result);
-                internal::delete_req(req);
-            });
-            if (err)
-            {
-                internal::delete_req(req);
-            }
-            return err;
-        }
+				auto val = static_cast<promise_cur_data_t*>(req);
+				val->set_value(req->result);
+				val->resume();
+			});
+			co_await ret;
+			return ret_value;
+		}
 
 		error stat(const std::string& path, std::function<void(error e)>&& callback)
         {
-            auto req = internal::create_req(std::move(callback));
-			error err = uv_fs_stat(uv_default_loop(), req, path.c_str(), [](uv_fs_t* req){
+			PROMISE_REQ_HEAD(us_fs_task_t, error);
+			error err = uv_fs_stat(uv_default_loop(), &uv_req, path.c_str(), [](uv_fs_t* req){
                 assert(req->fs_type == UV_FS_STAT);
-                internal::invoke_from_req<decltype(callback)>(req, req->result);
-                internal::delete_req(req);
-            }); 
-            if (err)
-            {
-                internal::delete_req(req);
-            }
-            return err;
-        }
+				auto val = static_cast<promise_cur_data_t*>(req);
+				val->set_value(req->result);
+				val->resume();
+			});
+			co_await ret;
+			return ret_value;
+		}
 
 		error fstat(const std::string& path, std::function<void(error e)>&& callback)
         {
-            auto req = internal::create_req(std::move(callback));
-			error err = uv_fs_fstat(uv_default_loop(), req, path.c_str(), [](uv_fs_t* req){
+			PROMISE_REQ_HEAD(us_fs_task_t, error);
+			error err = uv_fs_fstat(uv_default_loop(), &uv_req, path.c_str(), [](uv_fs_t* req){
                 assert(req->fs_type == UV_FS_FSTAT);
-                internal::invoke_from_req<decltype(callback)>(req, req->result);
-                internal::delete_req(req);
-            });
-            if (err)
-            {
-                internal::delete_req(req);
-            }
-            return err;
-        }
+				auto val = static_cast<promise_cur_data_t*>(req);
+				val->set_value(req->result);
+				val->resume();
+			});
+			co_await ret;
+			return ret_value;
+		}
 #endif
     }
 
     class file
     {
     public:
-        static bool read(const std::string& path, std::function<void(const std::string& str, error e)>&& callback)
+        static task<std::tuple<std::string,error>> read(const std::string& path)
         {
-            return 0 == fs::open(path.c_str(), fs::read_only, 0, [=,cb = std::move(callback)](fs::file_handle fd, error e)mutable {
-                if(e)
-                {
-                    callback(std::string(), e);
-                }
-                else
-                {
-					error err = fs::read_to_end(fd, std::move(cb));
-                    if (err)
-                    {
-                        // failed to initiate read_to_end()
-                        callback(std::string(), error(err));
-                    }
-                }
-            });
+			std::tuple<std::string, error> ret;
+			auto result = co_await fs::open(path.c_str(), fs::read_only, 0);
+			if (std::get<0>(result) == -1)
+			{
+				std::get<1>(ret) = std::get<1>(result);
+			}
+			else
+			{
+				ret = co_await fs::read_to_end(std::get<0>(result));
+			}
+			return ret;
         }
 
-        static bool write(const std::string& path, const std::string& str, std::function<void(int nwritten, error e)>&& callback)
+        static task<std::tuple<native::fs::file_handle, error>> write(const std::string& path, const std::string& str)
         {
-            return 0 == fs::open(path.c_str(), fs::write_only|fs::create, 0664, [=, cb = std::move(callback)](fs::file_handle fd, error e)mutable {
-                if(e)
-                {
-                    callback(0, e);
-                }
-                else
-                {
-					error err = fs::write(fd, str.c_str(), str.length(), 0, std::move(cb));
-                    if (err)
-                    {
-                        // failed to initiate read_to_end()
-                        callback(0, error(err));
-                    }
-                }
-            });
+			std::tuple<native::fs::file_handle, error> ret;
+			auto result = co_await fs::open(path.c_str(), fs::read_only, 0);
+			if (std::get<0>(result) == -1)
+			{
+				std::get<1>(ret) = std::get<1>(result);
+			}
+			else
+			{
+				ret = co_await fs::write(std::get<0>(result), str.c_str(), str.length(), 0);
+			}
+			return ret;
         }
     };
 }

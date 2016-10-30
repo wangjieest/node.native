@@ -11,6 +11,11 @@ namespace native
 {
     namespace net
     {
+		template<typename T>
+		struct uv_connect_task_t :public uv_connect_t, promise_data_base_t<T> {
+			using type = T;
+		};
+
         class tcp : public native::base::stream
         {
         public:
@@ -57,27 +62,40 @@ namespace native
                     || uv_tcp_bind(get<uv_tcp_t>(), (sockaddr*)&sock, UV_TCP_IPV6ONLY); 
             }
 
-			error connect(const std::string& ip, int port, std::function<void(error)>&& callback)
+			task<error> connect(const std::string& ip, int port)
             {
+				PROMISE_REQ_HEAD(uv_connect_task_t, error);
                 sockaddr_in sock;
-                callbacks::store(get()->data, native::internal::uv_cid_connect, std::move(callback));
-                return uv_ip4_addr(ip.c_str(), port, &sock)
-                    || uv_tcp_connect(new uv_connect_t, get<uv_tcp_t>(), (sockaddr*)&sock, [](uv_connect_t* req, int status) {
-                    callbacks::invoke<decltype(callback)>(req->handle->data, native::internal::uv_cid_connect, status);
-                    delete req;
-                });
+				error err = uv_ip4_addr(ip.c_str(), port, &sock);
+				if (!err)
+				{
+					err = uv_tcp_connect(&uv_req, get<uv_tcp_t>(), (sockaddr*)&sock, [](uv_connect_t* req, int status) {
+						auto val = static_cast<promise_cur_data_t*>(req);
+						val->set_value(status);
+						val->resume();
+					});
+				}
+				co_await ret;
+				return ret_value;
             }
 
-			error connect6(const std::string& ip, int port, std::function<void(error)>&& callback)
+			task<error> connect6(const std::string& ip, int port)
             {
-                sockaddr_in6 sock;
-                callbacks::store(get()->data, native::internal::uv_cid_connect6, std::move(callback));
-                return uv_ip6_addr(ip.c_str(), port, &sock)
-                    || uv_tcp_connect(new uv_connect_t, get<uv_tcp_t>(), (sockaddr*)&sock, [](uv_connect_t* req, int status) {
-                    callbacks::invoke<decltype(callback)>(req->handle->data, native::internal::uv_cid_connect6, status);
-                    delete req;
-                });
-            }
+				PROMISE_REQ_HEAD(uv_connect_task_t, error);
+
+				sockaddr_in6 sock;
+				error err = uv_ip6_addr(ip.c_str(), port, &sock);
+				if (!err)
+				{
+					err = uv_tcp_connect(new uv_connect_t, get<uv_tcp_t>(), (sockaddr*)&sock, [](uv_connect_t* req, int status) {
+						auto val = static_cast<promise_cur_data_t*>(req);
+						val->set_value(status);
+						val->resume();
+					});
+				}
+				co_await ret;
+				return ret_value;
+			}
 
 			error getsockname(bool& ip4, std::string& ip, int& port)
             {

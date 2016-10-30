@@ -144,7 +144,7 @@ namespace native
             {}
 
         public:
-            error end(const std::string& body)
+            task<error> end(const std::string& body)
             {
                 // Content-Length
                 if(headers_.find("Content-Length") == headers_.end())
@@ -165,14 +165,10 @@ namespace native
                 response_text << body;
 
                 auto str = response_text.str();
-                return socket_->write(str.c_str(), static_cast<int>(str.length()), [=](error e) {
-                    if(e)
-                    {
-                        // TODO: handle error
-                    }
-                    // clean up
-                    client_.reset();
-                });
+
+				error err = co_await socket_->write(str.c_str(), static_cast<int>(str.length()));
+				client_.reset();
+				return err;
             }
 
             void set_status(int status_code)
@@ -343,16 +339,16 @@ namespace native
             }
 
         private:
-            bool parse(std::function<void(request&, response&)>&& callback)
+            task<std::tuple<std::unique_ptr<request>, std::unique_ptr<response>,error>> parse()
             {
-                request_ = new request;
-                response_ = new response(this, socket_.get());
-
+				std::tuple<std::unique_ptr<request>, std::unique_ptr<response>, error> ret_value;
+				auto& request_ = std::get<0>(ret_value);
+				auto& response_ = std::get<1>(ret_value);
+				request_.reset(new request());
+				response_.reset(new response(this, socket_.get()));
+				
                 http_parser_init(&parser_, HTTP_REQUEST);
                 parser_.data = this;
-
-                // store callback object
-                callbacks::store(callback_lut_, 0, std::move(callback));
 
                 parser_settings_.on_url = [](http_parser* parser, const char *at, size_t len) {
                     auto client = reinterpret_cast<client_context*>(parser->data);
@@ -420,20 +416,19 @@ namespace native
                 parser_settings_.on_message_complete = [](http_parser* parser) {
                     //printf("on_message_complete, so invoke the callback.\n");
                     auto client = reinterpret_cast<client_context*>(parser->data);
-                    // invoke stored callback object
-                    callbacks::invoke<decltype(callback)>(client->callback_lut_, 0, *client->request_, *client->response_);
                     return 1; // 0 or 1?
                 };
 
-                socket_->read_start([=](const char* buf, int len){
-                    if (buf == 0x00 && len == -1) {
-                        response_->set_status(500);
-                    } else {
-                        http_parser_execute(&parser_, &parser_settings_, buf, len);
-                    }
-                });
+				auto ret = co_await socket_->read_start();
+				if(std::get<0>(ret) == 0 && std::get<1>(ret) == -1) {
+                    response_->set_status(500);
+					std::get<2>(ret_value) = -1;
+				} else {
 
-                return true;
+					http_parser_execute(&parser_, &parser_settings_, std::get<0>(ret), std::get<1>(ret));
+				}
+
+				return ret_value;
             }
 
         private:
